@@ -150,14 +150,14 @@
     </header>
 
     <div class="notification-banner" id="notifyBlock">
-        <span style="font-size: 14px;">啟用每日展覽通知</span>
+        <span style="font-size: 14px;">啟用每日與展前通知</span>
         <button onclick="requestNotification()">開啟</button>
     </div>
 
     <main id="contentContainer"></main>
 
     <script>
-        // 展覽資料庫（實務上可串接 API 或定時更新此 JSON 陣列）
+        // 展覽資料庫
         const exhibitions = [
             {
                 name: "台北國際半導體展 (SEMICON)",
@@ -190,7 +190,13 @@
         ];
 
         function initApp() {
+            renderMonthSections();
+            checkAndTriggerExhibitionAlert();
+        }
+
+        function renderMonthSections() {
             const container = document.getElementById("contentContainer");
+            container.innerHTML = "";
             const today = new Date();
             
             // 產出 2 個月份的視圖（當月與次月）
@@ -207,7 +213,6 @@
                 title.innerText = `${month} 月展覽`;
                 section.appendChild(title);
 
-                // 篩選屬於該月份的展覽
                 const currentMonthExhibitions = exhibitions.filter(item => {
                     const start = new Date(item.startDate);
                     return start.getFullYear() === year && (start.getMonth() + 1) === month;
@@ -246,7 +251,48 @@
             }
         }
 
-        // 通知權限要求
+        // 檢查「今天」與「明天（前一天提前預告）」是否有展覽
+        function checkAndTriggerExhibitionAlert() {
+            if (!("Notification" in window) || Notification.permission !== "granted") {
+                return;
+            }
+
+            const today = new Date();
+            const tomorrow = new Date(today);
+            tomorrow.setDate(today.getDate() + 1);
+
+            const formatYMD = d => {
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return `${y}-${m}-${day}`;
+            };
+
+            const todayStr = formatYMD(today);
+            const tomorrowStr = formatYMD(tomorrow);
+
+            // 當日展覽（進行中）
+            const todayEvents = exhibitions.filter(e => todayStr >= e.startDate && todayStr <= e.endDate);
+            // 明日開展或明日進行中的展覽（前一天提醒）
+            const tomorrowEvents = exhibitions.filter(e => tomorrowStr >= e.startDate && tomorrowStr <= e.endDate);
+
+            let messageParts = [];
+            if (todayEvents.length > 0) {
+                messageParts.push(`【今日展覽】${todayEvents.map(e => e.name).join('、')}`);
+            }
+            if (tomorrowEvents.length > 0) {
+                messageParts.push(`【明日預告】${tomorrowEvents.map(e => e.name).join('、')}`);
+            }
+
+            if (messageParts.length > 0) {
+                new Notification("南港展覽館提醒", {
+                    body: messageParts.join("\n"),
+                    icon: "https://cdn-icons-png.flaticon.com/512/2693/2693507.png"
+                });
+            }
+        }
+
+        // 請求推播通知權限
         function requestNotification() {
             if (!("Notification" in window)) {
                 alert("此瀏覽器不支援通知功能");
@@ -256,14 +302,17 @@
             Notification.requestPermission().then(permission => {
                 if (permission === "granted") {
                     document.getElementById("notifyBlock").style.display = "none";
-                    new Notification("南港展覽通知已啟用", {
-                        body: "每天早上將為您檢查當日展覽狀態。"
-                    });
+                    checkAndTriggerExhibitionAlert();
                 }
             });
         }
 
-        window.onload = initApp;
+        window.onload = () => {
+            if ("Notification" in window && Notification.permission === "granted") {
+                document.getElementById("notifyBlock").style.display = "none";
+            }
+            initApp();
+        };
     </script>
 </body>
 </html>
