@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>南港展覽館活動</title>
     
-    <!-- iOS PWA 全螢幕設定 -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="南港展覽">
@@ -154,42 +153,24 @@
         <button onclick="requestNotification()">開啟</button>
     </div>
 
-    <main id="contentContainer"></main>
+    <main id="contentContainer">
+        <div style="text-align: center; color: var(--text-secondary); padding-top: 40px;">載入最新展覽中...</div>
+    </main>
 
     <script>
-        // 展覽資料庫
-        const exhibitions = [
-            {
-                name: "台北國際半導體展 (SEMICON)",
-                startDate: "2026-09-02",
-                endDate: "2026-09-04",
-                icon: "💡",
-                url: "https://www.tainex.com.tw"
-            },
-            {
-                name: "台北國際自動化工業大展",
-                startDate: "2026-09-16",
-                endDate: "2026-09-19",
-                icon: "⚙️",
-                url: "https://www.tainex.com.tw"
-            },
-            {
-                name: "台灣國際電子製造展",
-                startDate: "2026-10-21",
-                endDate: "2026-10-23",
-                icon: "🔌",
-                url: "https://www.tainex.com.tw"
-            },
-            {
-                name: "台北國際綠色產業展",
-                startDate: "2026-10-28",
-                endDate: "2026-10-30",
-                icon: "🌱",
-                url: "https://www.tainex.com.tw"
-            }
-        ];
+        let exhibitions = [];
 
-        function initApp() {
+        async function initApp() {
+            try {
+                // 加上時間戳記防瀏覽器快取舊資料
+                const res = await fetch(`events.json?t=${new Date().getTime()}`);
+                if (res.ok) {
+                    exhibitions = await res.json();
+                }
+            } catch (err) {
+                console.error("載入展覽資料失敗:", err);
+            }
+
             renderMonthSections();
             checkAndTriggerExhibitionAlert();
         }
@@ -199,7 +180,7 @@
             container.innerHTML = "";
             const today = new Date();
             
-            // 產出 2 個月份的視圖（當月與次月）
+            // 產出當月與次月視圖
             for (let i = 0; i < 2; i++) {
                 const targetDate = new Date(today.getFullYear(), today.getMonth() + i, 1);
                 const year = targetDate.getFullYear();
@@ -237,7 +218,7 @@
                         const eDate = item.endDate.substring(5).replace('-', '/');
 
                         card.innerHTML = `
-                            <div class="card-icon">${item.icon}</div>
+                            <div class="card-icon">${item.icon || '🎪'}</div>
                             <div class="card-name">${item.name}</div>
                             <div class="card-date">${sDate} - ${eDate}</div>
                         `;
@@ -251,11 +232,8 @@
             }
         }
 
-        // 檢查「今天」與「明天（前一天提前預告）」是否有展覽
         function checkAndTriggerExhibitionAlert() {
-            if (!("Notification" in window) || Notification.permission !== "granted") {
-                return;
-            }
+            if (!("Notification" in window) || Notification.permission !== "granted") return;
 
             const today = new Date();
             const tomorrow = new Date(today);
@@ -271,18 +249,12 @@
             const todayStr = formatYMD(today);
             const tomorrowStr = formatYMD(tomorrow);
 
-            // 當日展覽（進行中）
             const todayEvents = exhibitions.filter(e => todayStr >= e.startDate && todayStr <= e.endDate);
-            // 明日開展或明日進行中的展覽（前一天提醒）
             const tomorrowEvents = exhibitions.filter(e => tomorrowStr >= e.startDate && tomorrowStr <= e.endDate);
 
             let messageParts = [];
-            if (todayEvents.length > 0) {
-                messageParts.push(`【今日展覽】${todayEvents.map(e => e.name).join('、')}`);
-            }
-            if (tomorrowEvents.length > 0) {
-                messageParts.push(`【明日預告】${tomorrowEvents.map(e => e.name).join('、')}`);
-            }
+            if (todayEvents.length > 0) messageParts.push(`【今日展覽】${todayEvents.map(e => e.name).join('、')}`);
+            if (tomorrowEvents.length > 0) messageParts.push(`【明日預告】${tomorrowEvents.map(e => e.name).join('、')}`);
 
             if (messageParts.length > 0) {
                 new Notification("南港展覽館提醒", {
@@ -292,7 +264,6 @@
             }
         }
 
-        // 請求推播通知權限
         function requestNotification() {
             if (!("Notification" in window)) {
                 alert("此瀏覽器不支援通知功能");
