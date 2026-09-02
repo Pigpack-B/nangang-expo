@@ -1,0 +1,16 @@
+[
+  {
+    "name": "台北國際自動化工業大展",
+    "startDate": "2026-09-10",
+    "endDate": "2026-09-13",
+    "icon": "⚙️",
+    "url": "https://www.tainex.com.tw"
+  },
+  {
+    "name": "台灣國際電子製造展",
+    "startDate": "2026-10-15",
+    "endDate": "2026-10-18",
+    "icon": "🔌",
+    "url": "https://www.tainex.com.tw"
+  }
+]
