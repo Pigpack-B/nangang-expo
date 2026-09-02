@@ -1,10 +1,11 @@
-name: 自動更新南港展覽資料
+name: 每週自動更新南港展覽資料
 
 on:
   schedule:
-    # 每天 UTC 時間 22:00（即台灣時間早上 06:00）自動執行
-    - cron: '0 22 * * *'
-  # 支援手動在網頁上一鍵觸發測試
+    # 台灣時間 (UTC+8) 每週一早上 06:00
+    # 對應 UTC 時間為週日晚上 22:00
+    - cron: '0 22 * * 0'
+  # 支援隨時在網頁上點「Run workflow」立即測試
   workflow_dispatch:
 
 jobs:
@@ -20,17 +21,17 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 安裝爬蟲所需套件
+      - name: 安裝必要套件
         run: |
-          pip install requests beautifulsoup4 python-dateutil
+          pip install requests python-dateutil
 
-      - name: 執行爬蟲產出 events.json
+      - name: 執行爬蟲更新 events.json
         run: |
           python crawler.py
 
-      - name: 將最新 events.json 提交存回倉庫
+      - name: 自動提交並推送更新
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add events.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "自動更新展覽資料 [skip ci]" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "每週自動更新展覽資料 [skip ci]" && git push)
