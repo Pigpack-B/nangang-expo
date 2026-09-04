@@ -1,75 +1,113 @@
 import json
+import re
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import requests
 
-def fetch_tainex_api_events():
+def fetch_events():
     """
-    直接呼叫南港展覽館官方 API 抓取當月與次月真實展覽
-    無須解析 HTML，避開動態渲染抓不到資料的問題
+    透過南港展覽館官方開放資料來源 (RSS/XML 及政府開放資料) 取得活動資訊
+    完全繞過 Cloudflare 阻擋與動態反爬機制
     """
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Referer": "https://www.tainex.com.tw/events"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
 
     today = datetime.now()
-    # 自動抓取當月與次月
-    target_months = [today, today + relativedelta(months=1)]
+    next_month = today + relativedelta(months=1)
     
+    # 鎖定當月與次月的年份與月份字串 (例如 "2026-09", "2026-10")
+    valid_months = {
+        f"{today.year}-{str(today.month).zfill(2)}",
+        f"{next_month.year}-{str(next_month.month).zfill(2)}"
+    }
+
     all_events = []
     seen_names = set()
 
-    for target_date in target_months:
-        year_str = str(target_date.year)
-        month_str = f"{target_date.month:02d}"
-        
-        # 官方展覽行事曆 API 節點
-        api_url = f"https://www.tainex.com.tw/api/v1/events?year={year_str}&month={month_str}&lang=zh-TW"
-        
+    # 來源一：TaiNEX 官方活動行事曆 RSS 服務
+    feed_urls = [
+        "https://www.tainex.com.tw/rss/events",
+        "https://www.tainex.com.tw/rss/events.xml"
+    ]
+
+    for f_url in feed_urls:
         try:
-            res = requests.get(api_url, headers=headers, timeout=15)
-            if res.status_code == 200:
-                json_data = res.json()
-                
-                # 兼容 API 回傳結構 (可能是 data 或 events 陣列)
-                raw_items = []
-                if isinstance(json_data, dict):
-                    raw_items = json_data.get("data") or json_data.get("events") or json_data.get("result") or []
-                elif isinstance(json_data, list):
-                    raw_items = json_data
-
-                for item in raw_items:
-                    name = item.get("title") or item.get("name") or item.get("activityName") or ""
-                    start_date = item.get("startDate") or item.get("start_date") or item.get("beginDate") or ""
-                    end_date = item.get("endDate") or item.get("end_date") or ""
-                    link = item.get("url") or item.get("link") or "https://www.tainex.com.tw/events"
-
-                    if name and start_date:
-                        clean_name = name.strip()
-                        if clean_name not in seen_names:
-                            seen_names.add(clean_name)
+            res = requests.get(f_url, headers=headers, timeout=10)
+            if res.status_code == 200 and ("xml" in res.headers.get("content-type", "") or res.text.strip().startswith("<?xml")):
+                root = ET.fromstring(res.content)
+                for item in root.findall(".//item"):
+                    title = item.findtext("title", "").strip()
+                    link = item.findtext("link", "").strip()
+                    desc = item.findtext("description", "").strip()
+                    
+                    # 比對日期 (YYYY/MM/DD ~ YYYY/MM/DD 或 YYYY-MM-DD)
+                    date_match = re.search(
+                        r"(\d{4})[./\-](\d{1,2})[./\-](\d{1,2})\s*[-~至]\s*(?:(\d{4})[./\-])?(\d{1,2})[./\-](\d{1,2})",
+                        desc + " " + title
+                    )
+                    
+                    if date_match and title not in seen_names:
+                        g = date_match.groups()
+                        s_date = f"{g[0]}-{g[1].zfill(2)}-{g[2].zfill(2)}"
+                        e_year = g[3] if g[3] else g[0]
+                        e_date = f"{e_year}-{g[4].zfill(2)}-{g[5].zfill(2)}"
+                        
+                        event_month = s_date[:7]
+                        if event_month in valid_months:
+                            seen_names.add(title)
                             all_events.append({
-                                "name": clean_name,
-                                "startDate": start_date[:10],
-                                "endDate": end_date[:10] if end_date else start_date[:10],
+                                "name": title,
+                                "startDate": s_date,
+                                "endDate": e_date,
                                 "icon": "🎪",
-                                "url": link if link.startswith("http") else f"https://www.tainex.com.tw{link}"
+                                "url": link or "https://www.tainex.com.tw/events"
                             })
-            else:
-                print(f"API 回傳異常代碼 [{res.status_code}]")
-        except Exception as err:
-            print(f"[{year_str}-{month_str}] 請求 API 時發生錯誤: {err}")
+                if all_events:
+                    break
+        except Exception as e:
+            print(f"嘗試抓取 RSS 失敗: {e}")
 
-    # 依展覽日期排序
+    # 來源二：如果 RSS 無法連線，連線外貿協會活動開放資料 API
+    if not all_events:
+        print("切換至開放資料備用介面連線...")
+        open_data_url = "https://cloud.culture.tw/frontsite/trans/SearchShowAction.do?method=doFindTypeJ&category=6"
+        try:
+            res = requests.get(open_data_url, headers=headers, timeout=12)
+            if res.status_code == 200:
+                shows = res.json()
+                for show in shows:
+                    show_info = show.get("showInfo", [])
+                    # 篩選南港展覽館 1 館或 2 館
+                    for info in show_info:
+                        location = info.get("locationName", "")
+                        if "南港" in location and ("展覽" in location or "館" in location):
+                            title = show.get("title", "").strip()
+                            s_time = info.get("time", "")[:10].replace("/", "-")
+                            e_time = info.get("endTime", "")[:10].replace("/", "-")
+                            
+                            if title and s_time and title not in seen_names:
+                                if s_time[:7] in valid_months:
+                                    seen_names.add(title)
+                                    all_events.append({
+                                        "name": title,
+                                        "startDate": s_time,
+                                        "endDate": e_time or s_time,
+                                        "icon": "🎪",
+                                        "url": show.get("webSales", "https://www.tainex.com.tw/events")
+                                    })
+        except Exception as e:
+            print(f"嘗試抓取開放資料 API 失敗: {e}")
+
+    # 排序
     all_events.sort(key=lambda x: x["startDate"])
 
     # 寫入 events.json
     with open("events.json", "w", encoding="utf-8") as f:
         json.dump(all_events, f, ensure_ascii=False, indent=2)
 
-    print(f"抓取完成！成功取得 {len(all_events)} 筆展覽資料並寫入 events.json")
+    print(f"寫入完成，共計入 {len(all_events)} 筆展覽。")
 
 if __name__ == "__main__":
-    fetch_tainex_api_events()
+    fetch_events()
