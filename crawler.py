@@ -1,85 +1,94 @@
 import json
+import re
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import requests
+from bs4 import BeautifulSoup
 
-def fetch_tainex_all_events():
+def fetch_tainex_two_months():
     """
-    透過南港展覽館 API 抓取當月與次月的真實展覽資料
+    純動態抓取南港展覽館當月與次月的所有展覽活動
+    完全不依賴寫死資料，終身全自動更新
     """
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Referer": "https://www.tainex.com.tw/events"
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
     }
 
     today = datetime.now()
-    months_to_check = [today, today + relativedelta(months=1)]
+    # 鎖定 2 個月份：當月與次月
+    target_months = [today, today + relativedelta(months=1)]
     
     all_events = []
     seen_names = set()
 
-    for target_date in months_to_check:
+    for target_date in target_months:
         year_str = str(target_date.year)
         month_str = f"{target_date.month:02d}"
-
-        # 南港展覽館官網活動查詢 API
-        api_url = f"https://www.tainex.com.tw/api/v1/events?year={year_str}&month={month_str}&lang=zh-TW"
+        
+        url = f"https://www.tainex.com.tw/events?year={year_str}&month={month_str}"
         
         try:
-            res = requests.get(api_url, headers=headers, timeout=15)
+            res = requests.get(url, headers=headers, timeout=15)
             if res.status_code == 200:
-                data = res.json()
-                items = data.get("data", []) or data.get("events", []) or []
+                soup = BeautifulSoup(res.text, "html.parser")
                 
-                for item in items:
-                    name = item.get("title") or item.get("name") or item.get("activityName", "")
-                    start_date = item.get("startDate") or item.get("start_date", "")
-                    end_date = item.get("endDate") or item.get("end_date", "")
-                    link = item.get("url") or item.get("link") or "https://www.tainex.com.tw/events"
+                # 選取所有展覽行或卡片區塊
+                cards = soup.select(".event-card, .event-item, .exhibition-item, tr, .calendar-event")
+                
+                for card in cards:
+                    text = card.get_text(separator=" ", strip=True)
+                    
+                    # 匹配日期區間格式（例如 2026/09/02 - 2026/09/04、2026.09.02 ~ 09.04、2026-09-02 至 2026-09-04）
+                    date_match = re.search(
+                        r"(\d{4})[./\-](\d{1,2})[./\-](\d{1,2})\s*[-~至]\s*(?:(\d{4})[./\-])?(\d{1,2})[./\-](\d{1,2})",
+                        text
+                    )
+                    
+                    if date_match:
+                        title_el = card.select_one(".title, .event-title, h3, h4, strong, a")
+                        name = title_el.get_text(strip=True) if title_el else text.split()[0]
+                        
+                        link_el = card.select_one("a")
+                        href = link_el.get("href") if link_el else "https://www.tainex.com.tw/events"
+                        if href and not href.startswith("http"):
+                            href = f"https://www.tainex.com.tw{href}"
 
-                    # 格式正規化為 YYYY-MM-DD
-                    if name and start_date and name not in seen_names:
-                        seen_names.add(name)
-                        all_events.append({
-                            "name": name.strip(),
-                            "startDate": start_date[:10],
-                            "endDate": end_date[:10] if end_date else start_date[:10],
-                            "icon": "🎪",
-                            "url": link
-                        })
-        except Exception as e:
-            print(f"抓取 {year_str}-{month_str} 資料時發生錯誤: {e}")
+                        # 解析日期並補零正規化為 YYYY-MM-DD
+                        groups = date_match.groups()
+                        s_year = groups[0]
+                        s_month = groups[1].zfill(2)
+                        s_day = groups[2].zfill(2)
+                        
+                        e_year = groups[3] if groups[3] else s_year
+                        e_month = groups[4].zfill(2)
+                        e_day = groups[5].zfill(2)
+                        
+                        start_date = f"{s_year}-{s_month}-{s_day}"
+                        end_date = f"{e_year}-{e_month}-{e_day}"
 
-    # 若官網 API 異常時的保底資料
-    if not all_events:
-        print("未獲取到即時 API 資料，寫入備援清單")
-        y = today.year
-        all_events = [
-            {
-                "name": "SEMICON Taiwan 國際半導體展",
-                "startDate": f"{y}-09-02",
-                "endDate": f"{y}-09-04",
-                "icon": "💡",
-                "url": "https://www.semicontaiwan.org/"
-            },
-            {
-                "name": "台北國際自動化工業大展",
-                "startDate": f"{y}-09-16",
-                "endDate": f"{y}-09-19",
-                "icon": "⚙️",
-                "url": "https://www.taiwanautomation.com.tw/"
-            }
-        ]
+                        clean_name = name.strip()
+                        if len(clean_name) >= 3 and clean_name not in seen_names:
+                            seen_names.add(clean_name)
+                            all_events.append({
+                                "name": clean_name,
+                                "startDate": start_date,
+                                "endDate": end_date,
+                                "icon": "🎪",
+                                "url": href
+                            })
+        except Exception as err:
+            print(f"[{year_str}-{month_str}] 連線抓取失敗: {err}")
 
-    # 按展覽開始日期排序
+    # 依展期開始日由近至遠排序
     all_events.sort(key=lambda x: x["startDate"])
 
-    # 寫入 events.json
+    # 直接覆寫產出最新的 events.json（抓到幾筆就存幾筆，不塞入任何寫死假資料）
     with open("events.json", "w", encoding="utf-8") as f:
         json.dump(all_events, f, ensure_ascii=False, indent=2)
 
-    print(f"更新完成，共計入 {len(all_events)} 檔展覽！")
+    print(f"更新成功！共計抓取並寫入 {len(all_events)} 筆最新展覽資料。")
 
 if __name__ == "__main__":
-    fetch_tainex_all_events()
+    fetch_tainex_two_months()
