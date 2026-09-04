@@ -2,15 +2,14 @@ name: 每日自動更新南港展覽資料
 
 on:
   schedule:
-    # 台灣時間 (UTC+8) 每天早上 06:00
-    # 對應 UTC 時間為每天晚上 22:00
     - cron: '0 22 * * *'
-  # 支援手動在網頁上隨時點「Run workflow」立即執行
   workflow_dispatch:
 
 jobs:
   scrape-and-update:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: 檢出倉庫程式碼
@@ -23,7 +22,7 @@ jobs:
 
       - name: 安裝必要套件
         run: |
-          pip install requests python-dateutil
+          pip install requests python-dateutil beautifulsoup4
 
       - name: 執行爬蟲更新 events.json
         run: |
